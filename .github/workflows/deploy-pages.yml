@@ -24,13 +24,12 @@ jobs:
       - name: Build
         working-directory: frontend
         run: npm run build
-        env:
+        #env:
           # Settings -> Secrets and variables -> Actions -> Variables
-          VITE_TON_ADDRESS: ${{ vars.VITE_TON_ADDRESS }}
-          VITE_TONCENTER_KEY: ${{ vars.VITE_TONCENTER_KEY }}
-          VITE_COINS_PER_TON: ${{ vars.VITE_COINS_PER_TON }}
-          VITE_COINS_PER_USDT: ${{ vars.VITE_COINS_PER_USDT }}
-          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          ##VITE_TONCENTER_KEY: ${{ vars.VITE_TONCENTER_KEY }}
+          #VITE_COINS_PER_TON: ${{ vars.VITE_COINS_PER_TON }}
+          #VITE_COINS_PER_USDT: ${{ vars.VITE_COINS_PER_USDT }}
+          #VITE_API_URL: ${{ vars.VITE_API_URL }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: frontend/dist
