@@ -20,5 +20,6 @@
   "ttlMin": 60,
   "toncenterKey": "d3801390201346b0c3499c73658a7fbfb5e96f620e5aeab674cf33277e134cde",
   "tronKey": "",
-  "starUsd": 0.015
+  "starUsd": 0.015,
+  "demoHash": "v2:757bfdb0ca27c4758cd66c3970b07783f10171d30076296c6b45fbb69453d3ea"
 }
