@@ -16,6 +16,9 @@ const LOCAL = API === undefined
 export type Method = 'TON' | 'USDT_TON' | 'USDT_TRC20' | 'STARS'
 export const METHOD_LABEL: Record<Method, string> = { TON: 'TON', USDT_TON: 'USDT (сеть TON)', USDT_TRC20: 'USDT (сеть TRON, TRC20)', STARS: 'Telegram Stars' }
 const ALL_METHODS: Method[] = ['TON', 'USDT_TON', 'USDT_TRC20', 'STARS']
+// ТЕСТ: пока нет сервера, «Telegram Stars» видны всем и зачисляются без реальной оплаты. Перед запуском для реальных денег поставить false:
+// тогда без сервера способ снова виден только владельцу в демо-режиме, а реальные Stars включатся сами при работе с сервером (VITE_API_URL).
+const TEST_STARS_FOR_ALL = true
 const USDT_TRC20_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
 const USDT_TON_MASTER = 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs'
 
@@ -245,7 +248,7 @@ export function DepositModal({ onClose, onNotice }: { onClose: () => void; onNot
       let t = 0, dead = false
       siteConfig().then(async c => {
         // Реальные Stars без сервера не принять (нужен токен бота), поэтому игрокам способ скрыт; владельцу в демо-режиме виден тестовый
-        const demo = await ownerDemoUnlocked()
+        const demo = TEST_STARS_FOR_ALL || (await ownerDemoUnlocked())
         if (dead) return
         if (!c.tonAddress && !c.trc20Address && !demo) return setErr('Пополнение не настроено: задайте адреса кошельков в админ-панели (admin.html).')
         const methods = { TON: c.methods.TON && !!c.tonAddress, USDT_TON: c.methods.USDT_TON && !!c.tonAddress, USDT_TRC20: c.methods.USDT_TRC20 && !!c.trc20Address, STARS: demo && c.methods.STARS }
@@ -321,7 +324,7 @@ export function DepositModal({ onClose, onNotice }: { onClose: () => void; onNot
     if (!cfg || !lim) return
     if (isStars) {
       if (LOCAL) {
-        if (!(await ownerDemoUnlocked())) return setErr('Оплата Stars работает только с сервером.')
+        if (!TEST_STARS_FOR_ALL && !(await ownerDemoUnlocked())) return setErr('Оплата Stars работает только с сервером.')
         const memo = 'qc-test-' + [...crypto.getRandomValues(new Uint8Array(6))].map(b => (b % 36).toString(36)).join('')
         setIntent({ memo, method: 'STARS', address: '', amount: String(num) }); setStatus('pending')
         await testStars(memo, Math.floor(num * cfg.rate.stars))
@@ -396,7 +399,7 @@ export function DepositModal({ onClose, onNotice }: { onClose: () => void; onNot
           <input className="dep-input dep-mono" placeholder={method === 'USDT_TRC20' ? 'T…' : 'UQ… / EQ…'} value={sender} onChange={e => setSender(e.target.value)} />
           <p className="dep-hint">Платёж привязывается к вам по этому адресу и точной сумме. С чужого адреса он не засчитается.</p>
         </>}
-        {isStars && LOCAL && <p className="dep-hint">Тест для владельца: Stars не списываются, звёзды зачисляются сразу. Для реальной оплаты нужен сервер.</p>}
+        {isStars && LOCAL && <p className="dep-hint">Тестовый режим: Stars не списываются, звёзды зачисляются сразу. Для реальной оплаты нужен сервер.</p>}
         <p className="dep-hint">≈ {money(num * lim!.rate)} ⭐ · 1 {unit} ≈ {lim!.rate} ⭐ (курс по рынку, обновляется) · от {lim!.min} до {lim!.max} {unit}</p>
         <button className="primary-btn wide" onClick={create} disabled={!amountOk || !available.length}>Продолжить</button>
       </>}
