@@ -251,7 +251,7 @@ export function DepositModal({ onClose, onNotice }: { onClose: () => void; onNot
         const demo = TEST_STARS_FOR_ALL || (await ownerDemoUnlocked())
         if (dead) return
         if (!c.tonAddress && !c.trc20Address && !demo) return setErr('Пополнение не настроено: задайте адреса кошельков в админ-панели (admin.html).')
-        const methods = { TON: c.methods.TON && !!c.tonAddress, USDT_TON: c.methods.USDT_TON && !!c.tonAddress, USDT_TRC20: c.methods.USDT_TRC20 && !!c.trc20Address, STARS: demo && c.methods.STARS }
+        const methods = { TON: c.methods.TON && !!c.tonAddress, USDT_TON: c.methods.USDT_TON && !!c.tonAddress, USDT_TRC20: c.methods.USDT_TRC20 && !!c.trc20Address, STARS: TEST_STARS_FOR_ALL || (demo && c.methods.STARS) }
         const first = ALL_METHODS.find(m => methods[m])
         if (first) { setMethod(first); setAmount(first === 'TON' ? '1' : '10') }
         const refresh = () => liveRates().then(r => setCfg({ tonAddress: c.tonAddress, trc20Address: c.trc20Address, methods, ttlMin: c.ttlMin, min: c.min, max: c.max, rate: { ton: r.ton, usdt: r.usdt, stars: 1 } }))
