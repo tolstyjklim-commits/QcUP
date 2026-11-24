@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Copy, ExternalLink, X } from 'lucide-react'
+import { Copy, ExternalLink, Star, X } from 'lucide-react'
 import { DEMO, money } from './lib'
 import { TonIcon, UsdtIcon } from './art'
 
 // ---------------------------------------------------------------------------------------------
-// Пополнение: TON, USDT в сети TON, USDT в сети TRON (TRC20).
+// Пополнение: TON, USDT в сети TON, USDT в сети TRON (TRC20), Telegram Stars (только с сервером).
 // Адреса кошельков и лимиты берутся из config.json (его делает admin.html), запасной вариант: переменные VITE_*.
 // Режим без сервера (GitHub Pages): сайт сам ищет платёж в блокчейне. С бэкендом (VITE_API_URL) проверку делает сервер.
 // ---------------------------------------------------------------------------------------------
@@ -13,22 +13,23 @@ const raw = env.VITE_API_URL as string | undefined
 const API = raw === 'same' ? '' : raw?.replace(/\/$/, '')
 const LOCAL = API === undefined
 
-export type Method = 'TON' | 'USDT_TON' | 'USDT_TRC20'
-export const METHOD_LABEL: Record<Method, string> = { TON: 'TON', USDT_TON: 'USDT (сеть TON)', USDT_TRC20: 'USDT (сеть TRON, TRC20)' }
+export type Method = 'TON' | 'USDT_TON' | 'USDT_TRC20' | 'STARS'
+export const METHOD_LABEL: Record<Method, string> = { TON: 'TON', USDT_TON: 'USDT (сеть TON)', USDT_TRC20: 'USDT (сеть TRON, TRC20)', STARS: 'Telegram Stars' }
+const ALL_METHODS: Method[] = ['TON', 'USDT_TON', 'USDT_TRC20', 'STARS']
 const USDT_TRC20_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
 const USDT_TON_MASTER = 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs'
 
 type SiteCfg = {
   tonAddress: string; trc20Address: string; toncenterKey: string; tronKey: string
   methods: Record<Method, boolean>
-  min: { ton: number; usdt: number }; max: { ton: number; usdt: number }
+  min: { ton: number; usdt: number; stars: number }; max: { ton: number; usdt: number; stars: number }
   ttlMin: number; starUsd: number; tonUsd: number; demoHash: string
 }
 const defaults = (): SiteCfg => ({
   tonAddress: env.VITE_TON_ADDRESS || '', trc20Address: env.VITE_TRC20_ADDRESS || '',
   toncenterKey: env.VITE_TONCENTER_KEY || '', tronKey: env.VITE_TRONGRID_KEY || '',
-  methods: { TON: true, USDT_TON: true, USDT_TRC20: true },
-  min: { ton: 0.1, usdt: 1 }, max: { ton: 1000, usdt: 5000 }, ttlMin: 60,
+  methods: { TON: true, USDT_TON: true, USDT_TRC20: true, STARS: true },
+  min: { ton: 0.1, usdt: 1, stars: 10 }, max: { ton: 1000, usdt: 5000, stars: 10000 }, ttlMin: 60,
   starUsd: Number(env.VITE_STAR_USD || 0.015), tonUsd: Number(env.VITE_TON_USD || 0), demoHash: '',
 })
 let cfgP: Promise<SiteCfg> | null = null
@@ -39,8 +40,8 @@ export function siteConfig(): Promise<SiteCfg> {
     const merge = (j: any) => {
       if (!j || typeof j !== 'object') return
       for (const k of ['tonAddress', 'trc20Address', 'toncenterKey', 'tronKey'] as const) if (typeof j[k] === 'string') base[k] = j[k].trim()
-      if (j.methods) for (const m of ['TON', 'USDT_TON', 'USDT_TRC20'] as Method[]) if (typeof j.methods[m] === 'boolean') base.methods[m] = j.methods[m]
-      for (const g of ['min', 'max'] as const) for (const k of ['ton', 'usdt'] as const) if (Number(j[g]?.[k]) > 0) base[g][k] = Number(j[g][k])
+      if (j.methods) for (const m of ALL_METHODS) if (typeof j.methods[m] === 'boolean') base.methods[m] = j.methods[m]
+      for (const g of ['min', 'max'] as const) for (const k of ['ton', 'usdt', 'stars'] as const) if (Number(j[g]?.[k]) > 0) base[g][k] = Number(j[g][k])
       if (Number(j.ttlMin) > 0) base.ttlMin = Number(j.ttlMin)
       if (typeof j.demoHash === 'string') base.demoHash = j.demoHash
       if (Number(j.starUsd) > 0) base.starUsd = Number(j.starUsd)
@@ -56,7 +57,12 @@ export function siteConfig(): Promise<SiteCfg> {
 // ---- демо-режим владельца ----
 // Открывается адресом игры с #demo в конце. На вашем компьютере (localhost) пароль не нужен, на опубликованном сайте и в туннеле
 // нужен пароль из админ-панели (в config.json хранится только его хэш). Игроки пароля не знают.
-const sha256 = async (s: string) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map(x => x.toString(16).padStart(2, '0')).join('')
+// Хеш хранится в публичном config.json, поэтому он должен быть дорогим для перебора: PBKDF2, 150 000 кругов, с солью. Тот же код в admin.html.
+export const pwHash = async (pw: string) => {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveBits'])
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode('qcup-demo-v2'), iterations: 150_000 }, key, 256)
+  return 'v2:' + [...new Uint8Array(bits)].map(x => x.toString(16).padStart(2, '0')).join('')
+}
 export async function ownerDemoUnlocked(): Promise<boolean> {
   try {
     if (sessionStorage.getItem('qcup-demo-ok') === '1') return true
@@ -65,7 +71,7 @@ export async function ownerDemoUnlocked(): Promise<boolean> {
     const c = await siteConfig()
     if (!c.demoHash) return false
     const pw = window.prompt('Пароль владельца для демо-режима')
-    if (!pw || (await sha256('qcup-demo:' + pw)) !== c.demoHash) return false
+    if (!pw || (await pwHash(pw)) !== c.demoHash) return false
     sessionStorage.setItem('qcup-demo-ok', '1')
     return true
   } catch { return false }
@@ -75,11 +81,13 @@ export async function ownerDemoUnlocked(): Promise<boolean> {
 const RK = 'qcup-rates'
 type Rates = { ton: number; usdt: number; at: number }
 export async function liveRates(): Promise<Rates> {
-  try { const c = JSON.parse(localStorage.getItem(RK) || '') as Rates; if (Date.now() - c.at < 55_000) return c } catch { /* нет кэша */ }
+  try { const c = JSON.parse(localStorage.getItem(RK) || '') as Rates; if (Date.now() - c.at < 55_000 && c.ton > 0 && c.usdt > 0) return c } catch { /* нет кэша */ }
   const cf = await siteConfig()
   let starUsd = cf.starUsd, tonUsd = cf.tonUsd
-  try { const j = await (await fetch('https://bes-dev.github.io/telegram_stars_rates/api.json')).json(); if (j.usdt_per_star > 0) starUsd = Number(j.usdt_per_star) } catch { /* запасной */ }
-  try { const j = await (await fetch('https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd')).json(); if (j['the-open-network']?.usd > 0) tonUsd = Number(j['the-open-network'].usd) } catch { /* запасной */ }
+  // внешний API не должен сам задавать курс без границ: сбой или подмена дали бы игрокам звёзды почти даром.
+  // Цена Star принимается, только если она в пределах от 1/3 до 3 запасной цены; цена TON: от $0,05 до $5000
+  try { const j = await (await fetch('https://bes-dev.github.io/telegram_stars_rates/api.json')).json(); const v = Number(j.usdt_per_star); if (v >= cf.starUsd / 3 && v <= cf.starUsd * 3) starUsd = v } catch { /* запасной */ }
+  try { const j = await (await fetch('https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd')).json(); const v = Number(j['the-open-network']?.usd); if (v >= 0.05 && v <= 5000) tonUsd = v } catch { /* запасной */ }
   const out: Rates = { ton: tonUsd > 0 ? Math.floor(tonUsd / starUsd) : Number(env.VITE_COINS_PER_TON || 150), usdt: Math.floor(1 / starUsd), at: Date.now() }
   try { localStorage.setItem(RK, JSON.stringify(out)) } catch { /* хранилище недоступно */ }
   return out
@@ -102,22 +110,43 @@ const isTronAddr = (a: string) => /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(a.trim())
 //  USDT (TON и TRON): у переводов нет надёжного комментария, поэтому платёж опознаётся по ТРЁМ признакам сразу:
 //    1) точная уникальная сумма, 2) адрес кошелька-отправителя, который игрок указал, 3) время перевода позже создания заявки.
 const KEY = 'qcup-deposits'
+type Credit = { memo: string; coins: number; method: Method }
 type Pend = { memo: string; method: Method; amount: string; sender?: string; created: number; expires: number; rate?: number }
-type Store = { pending: Pend[]; done: string[] }
+type Store = { pending: Pend[]; done: string[]; test?: Credit[] }
 const loadStore = (): Store => { try { return JSON.parse(localStorage.getItem(KEY) || '') as Store } catch { return { pending: [], done: [] } } }
 const saveStore = (s: Store) => { try { localStorage.setItem(KEY, JSON.stringify(s)) } catch { /* хранилище недоступно */ } }
 const SKEW = 120_000 // допуск на расхождение часов, мс
+// Платёж засчитывается, только если сделан внутри окна заявки: не раньше создания (с допуском на часы) и не позже истечения
+const inWindow = (p: Pend, ms: number) => ms >= p.created - SKEW && ms <= p.expires + SKEW
 
-type Credit = { memo: string; coins: number; method: Method }
+// ---- журнал платежей в браузере (режим без сервера) ----
+// Последние 200 событий лежат в localStorage этого браузера, их видно в admin.html (раздел «Журнал платежей»). Секреты и ключи не пишутся.
+const LOGK = 'qcup-pay-log'
+export function payLog(event: string, data: Record<string, unknown> = {}) {
+  try {
+    const list = JSON.parse(localStorage.getItem(LOGK) || '[]') as unknown[]
+    list.push({ t: new Date().toISOString(), event, ...data })
+    localStorage.setItem(LOGK, JSON.stringify(list.slice(-200)))
+  } catch { /* журнал не должен ломать платёж */ }
+  console.info('[pay]', event, data)
+}
+
+// Проверка и запись хранилища идут под замком: две открытые вкладки иначе обе увидели бы один платёж и зачислили его дважды
+const withLock = <T,>(fn: () => Promise<T>): Promise<T> => {
+  const l = (navigator as any).locks
+  return l?.request ? l.request('qcup-deposits', fn) : fn()
+}
 async function checkOnce(): Promise<Credit[]> {
   const c = await siteConfig()
   const st = loadStore()
   st.pending = st.pending.filter(p => p.expires > Date.now() - 10 * 60_000)
-  const out: Credit[] = []
+  const out: Credit[] = st.test || [] // тестовые зачисления Stars (только режим владельца), см. testStars
+  st.test = []
   const take = (p: Pend, hash: string, units: number, dec: number, fallback: number) => {
     const coins = Math.floor((units / 10 ** dec) * (p.rate ?? fallback))
-    if (coins <= 0) return
+    if (coins <= 0) return payLog('dust_ignored', { memo: p.memo, method: p.method, tx: hash, units })
     st.done.push(hash); st.pending = st.pending.filter(x => x !== p); out.push({ memo: p.memo, coins, method: p.method })
+    payLog('credited', { memo: p.memo, method: p.method, tx: hash, units, coins, rate: p.rate ?? fallback })
   }
   const has = (m: Method) => st.pending.some(p => p.method === m)
 
@@ -128,10 +157,11 @@ async function checkOnce(): Promise<Credit[]> {
       const hash = t.transaction_id?.hash, m = t.in_msg
       if (!hash || !m?.source || !m.message || st.done.includes(hash)) continue
       const p = st.pending.find(x => x.method === 'TON' && x.memo === m.message!.trim())
-      if (!p || (t.utime ?? 0) * 1000 < p.created - SKEW) continue
+      if (!p) continue
+      if (!inWindow(p, (t.utime ?? 0) * 1000)) { payLog('rejected_window', { memo: p.memo, method: p.method, tx: hash }); continue }
       take(p, hash, Number(m.value || '0'), 9, 150)
     }
-  } catch { /* повторим */ }
+  } catch (e) { payLog('poll_error', { what: 'ton', error: String((e as Error)?.message || e) }) }
 
   if (has('USDT_TON') && c.tonAddress) try {
     const r = await fetch(`https://toncenter.com/api/v3/jetton/transfers?owner_address=${encodeURIComponent(c.tonAddress)}&direction=in&limit=50&sort=desc`, { headers: c.toncenterKey ? { 'X-API-Key': c.toncenterKey } : {} })
@@ -140,10 +170,11 @@ async function checkOnce(): Promise<Credit[]> {
     for (const t of j.jetton_transfers || []) {
       if (t.transaction_aborted || toRaw(t.jetton_master) !== master || st.done.includes(t.transaction_hash)) continue
       const p = st.pending.find(x => x.method === 'USDT_TON' && x.amount === t.amount && !!t.source && !!x.sender && toRaw(x.sender.trim()) === toRaw(t.source))
-      if (!p || (t.transaction_now ?? 0) * 1000 < p.created - SKEW) continue
+      if (!p) continue
+      if (!inWindow(p, (t.transaction_now ?? 0) * 1000)) { payLog('rejected_window', { memo: p.memo, method: p.method, tx: t.transaction_hash }); continue }
       take(p, t.transaction_hash, Number(t.amount), 6, 100)
     }
-  } catch { /* повторим */ }
+  } catch (e) { payLog('poll_error', { what: 'usdt_ton', error: String((e as Error)?.message || e) }) }
 
   if (has('USDT_TRC20') && c.trc20Address) try {
     const r = await fetch(`https://api.trongrid.io/v1/accounts/${encodeURIComponent(c.trc20Address)}/transactions/trc20?only_confirmed=true&only_to=true&limit=50&contract_address=${USDT_TRC20_CONTRACT}`, { headers: c.tronKey ? { 'TRON-PRO-API-KEY': c.tronKey } : {} })
@@ -151,10 +182,11 @@ async function checkOnce(): Promise<Credit[]> {
     for (const t of j.data || []) {
       if (t.token_info?.address !== USDT_TRC20_CONTRACT || t.to !== c.trc20Address || st.done.includes(t.transaction_id)) continue
       const p = st.pending.find(x => x.method === 'USDT_TRC20' && x.amount === t.value && x.sender?.trim() === t.from)
-      if (!p || t.block_timestamp < p.created - SKEW) continue
+      if (!p) continue
+      if (!inWindow(p, t.block_timestamp)) { payLog('rejected_window', { memo: p.memo, method: p.method, tx: t.transaction_id }); continue }
       take(p, t.transaction_id, Number(t.value), 6, 100)
     }
-  } catch { /* повторим */ }
+  } catch (e) { payLog('poll_error', { what: 'usdt_trc20', error: String((e as Error)?.message || e) }) }
 
   st.done = st.done.slice(-300)
   saveStore(st)
@@ -170,7 +202,7 @@ export function useLocalDeposits(onCredit: (coins: number, asset: string) => voi
       if (busy) return
       busy = true
       try {
-        for (const c of await checkOnce()) {
+        for (const c of await withLock(checkOnce)) {
           onCredit(c.coins, METHOD_LABEL[c.method])
           window.dispatchEvent(new CustomEvent('qcup-dep', { detail: c }))
         }
@@ -178,16 +210,25 @@ export function useLocalDeposits(onCredit: (coins: number, asset: string) => voi
     }
     tick()
     const t = window.setInterval(tick, 10_000)
-    return () => clearInterval(t)
+    window.addEventListener('qcup-kick', tick)
+    return () => { clearInterval(t); window.removeEventListener('qcup-kick', tick) }
   }, [onCredit])
+}
+
+// Тестовая оплата Stars для режима без сервера (GitHub Pages). Реальные Stars без сервера принять нельзя (нужен токен бота),
+// поэтому владелец, открывший игру с #demo и паролем, может проверить сценарий: деньги не списываются, звёзды зачисляются сразу.
+async function testStars(memo: string, coins: number) {
+  await withLock(async () => { const st = loadStore(); st.test = [...(st.test || []), { memo, coins, method: 'STARS' as Method }]; saveStore(st) })
+  payLog('test_stars', { memo, coins })
+  window.dispatchEvent(new Event('qcup-kick'))
 }
 
 // ---- режим с бэкендом ----
 const initData = () => (window as any).Telegram?.WebApp?.initData || ''
 const hdr = () => ({ 'content-type': 'application/json', 'x-telegram-init-data': initData() })
 
-type Cfg = { tonAddress: string; trc20Address: string; methods: Record<Method, boolean>; ttlMin: number; min: { ton: number; usdt: number }; max: { ton: number; usdt: number }; rate: { ton: number; usdt: number } }
-type Intent = { memo: string; method: Method; address: string; amount: string; sender?: string; jettonMaster?: string | null }
+type Cfg = { tonAddress: string; trc20Address: string; methods: Record<Method, boolean>; ttlMin: number; min: { ton: number; usdt: number; stars: number }; max: { ton: number; usdt: number; stars: number }; rate: { ton: number; usdt: number; stars: number } }
+type Intent = { memo: string; method: Method; address: string; amount: string; sender?: string; jettonMaster?: string | null; invoice?: string }
 
 export function DepositModal({ onClose, onNotice }: { onClose: () => void; onNotice: (s: string) => void }) {
   const [cfg, setCfg] = useState<Cfg | null>(null)
@@ -201,22 +242,32 @@ export function DepositModal({ onClose, onNotice }: { onClose: () => void; onNot
 
   useEffect(() => {
     if (LOCAL) {
-      let t = 0
-      siteConfig().then(c => {
-        if (!c.tonAddress && !c.trc20Address) return setErr('Пополнение не настроено: задайте адреса кошельков в админ-панели (admin.html).')
-        const methods = { TON: c.methods.TON && !!c.tonAddress, USDT_TON: c.methods.USDT_TON && !!c.tonAddress, USDT_TRC20: c.methods.USDT_TRC20 && !!c.trc20Address }
-        const first = (['TON', 'USDT_TON', 'USDT_TRC20'] as Method[]).find(m => methods[m])
+      let t = 0, dead = false
+      siteConfig().then(async c => {
+        // Реальные Stars без сервера не принять (нужен токен бота), поэтому игрокам способ скрыт; владельцу в демо-режиме виден тестовый
+        const demo = await ownerDemoUnlocked()
+        if (dead) return
+        if (!c.tonAddress && !c.trc20Address && !demo) return setErr('Пополнение не настроено: задайте адреса кошельков в админ-панели (admin.html).')
+        const methods = { TON: c.methods.TON && !!c.tonAddress, USDT_TON: c.methods.USDT_TON && !!c.tonAddress, USDT_TRC20: c.methods.USDT_TRC20 && !!c.trc20Address, STARS: demo && c.methods.STARS }
+        const first = ALL_METHODS.find(m => methods[m])
         if (first) { setMethod(first); setAmount(first === 'TON' ? '1' : '10') }
-        const refresh = () => liveRates().then(r => setCfg({ tonAddress: c.tonAddress, trc20Address: c.trc20Address, methods, ttlMin: c.ttlMin, min: c.min, max: c.max, rate: { ton: r.ton, usdt: r.usdt } }))
+        const refresh = () => liveRates().then(r => setCfg({ tonAddress: c.tonAddress, trc20Address: c.trc20Address, methods, ttlMin: c.ttlMin, min: c.min, max: c.max, rate: { ton: r.ton, usdt: r.usdt, stars: 1 } }))
         refresh()
         t = window.setInterval(refresh, 60_000) // курс обновляется, пока открыто окно
       })
-      return () => clearInterval(t)
+      return () => { dead = true; clearInterval(t) }
     }
-    fetch(`${API}/api/deposit/config`).then(r => (r.ok ? r.json() : Promise.reject())).then(j => setCfg({
-      tonAddress: j.address, trc20Address: '', methods: { TON: true, USDT_TON: true, USDT_TRC20: false }, ttlMin: j.ttlMin,
-      min: { ton: j.minTon, usdt: j.usdt.min }, max: { ton: j.maxTon, usdt: j.usdt.max }, rate: { ton: j.coinsPerTon, usdt: j.usdt.coinsPerUsdt },
-    })).catch(() => setErr('Пополнение сейчас недоступно.'))
+    fetch(`${API}/api/deposit/config`).then(r => (r.ok ? r.json() : Promise.reject())).then(j => {
+      const st = j.stars || {}
+      const methods = { TON: !!j.address, USDT_TON: !!j.address, USDT_TRC20: false, STARS: !!st.enabled }
+      const first = ALL_METHODS.find(m => methods[m])
+      if (first) { setMethod(first); setAmount(first === 'TON' ? '1' : first === 'STARS' ? '100' : '10') }
+      setCfg({
+        tonAddress: j.address || '', trc20Address: '', methods, ttlMin: j.ttlMin,
+        min: { ton: j.minTon, usdt: j.usdt?.min ?? 1, stars: st.min ?? 10 }, max: { ton: j.maxTon, usdt: j.usdt?.max ?? 5000, stars: st.max ?? 10000 },
+        rate: { ton: j.coinsPerTon, usdt: j.usdt?.coinsPerUsdt ?? 100, stars: st.coinsPerStar ?? 1 },
+      })
+    }).catch(() => setErr('Пополнение сейчас недоступно.'))
   }, [])
 
   useEffect(() => {
@@ -244,16 +295,48 @@ export function DepositModal({ onClose, onNotice }: { onClose: () => void; onNot
     return () => clearTimeout(timer.current)
   }, [intent, status, onNotice])
 
-  const isUsdt = method !== 'TON'
-  const dec = isUsdt ? 1e6 : 1e9
+  const isStars = method === 'STARS'
+  const isUsdt = method === 'USDT_TON' || method === 'USDT_TRC20'
   const num = Number(amount.replace(',', '.')) || 0
-  const lim = cfg ? { min: isUsdt ? cfg.min.usdt : cfg.min.ton, max: isUsdt ? cfg.max.usdt : cfg.max.ton, rate: isUsdt ? cfg.rate.usdt : cfg.rate.ton } : null
-  const unit = isUsdt ? 'USDT' : 'TON'
+  const k = isStars ? 'stars' : isUsdt ? 'usdt' : 'ton'
+  const lim = cfg ? { min: cfg.min[k], max: cfg.max[k], rate: cfg.rate[k] } : null
+  const unit = isStars ? 'Stars' : isUsdt ? 'USDT' : 'TON'
+  const amountOk = !!lim && num >= lim.min && num <= lim.max && (!isStars || Number.isInteger(num))
   const senderOk = !isUsdt || (method === 'USDT_TRC20' ? isTronAddr(sender) : isTonAddr(sender))
+
+  // Счёт Telegram Stars открывается внутри Telegram. «Оплачено» от Telegram только подсказка для интерфейса:
+  // сами звёзды зачисляет сервер, когда бот получит подтверждённый платёж.
+  const openInvoice = (url: string) => {
+    if (!/^https:\/\/t\.me\//.test(url)) return setErr('Сервер вернул неожиданную ссылку на счёт. Платёж отменён.')
+    const tg = (window as any).Telegram?.WebApp
+    if (tg?.openInvoice) tg.openInvoice(url, (s: string) => {
+      if (s === 'paid') onNotice('Оплата прошла, зачисляем звёзды…')
+      else if (s === 'failed') setErr('Оплата не прошла. Попробуйте ещё раз.')
+    })
+    else window.open(url, '_blank')
+  }
 
   const create = async () => {
     setErr('')
     if (!cfg || !lim) return
+    if (isStars) {
+      if (LOCAL) {
+        if (!(await ownerDemoUnlocked())) return setErr('Оплата Stars работает только с сервером.')
+        const memo = 'qc-test-' + [...crypto.getRandomValues(new Uint8Array(6))].map(b => (b % 36).toString(36)).join('')
+        setIntent({ memo, method: 'STARS', address: '', amount: String(num) }); setStatus('pending')
+        await testStars(memo, Math.floor(num * cfg.rate.stars))
+        return
+      }
+      try {
+        const r = await fetch(`${API}/api/deposit/stars`, { method: 'POST', headers: hdr(), body: JSON.stringify({ stars: num }) })
+        const j = await r.json()
+        if (r.status === 401) return setErr('Войдите через Telegram, чтобы пополнить баланс.')
+        if (!r.ok) return setErr(j.error || 'Не удалось создать счёт')
+        setIntent({ memo: j.memo, method: 'STARS', address: '', amount: String(j.stars), invoice: j.invoiceLink }); setStatus('pending')
+        openInvoice(j.invoiceLink)
+      } catch { setErr('Нет связи с сервером') }
+      return
+    }
     if (!senderOk) return setErr(method === 'USDT_TRC20' ? 'Укажите адрес TRON-кошелька (начинается с T), с которого будете платить.' : 'Укажите адрес TON-кошелька, с которого будете платить.')
     if (LOCAL) {
       const rnd = crypto.getRandomValues(new Uint8Array(9))
@@ -269,6 +352,7 @@ export function DepositModal({ onClose, onNotice }: { onClose: () => void; onNot
       } else units = BigInt(Math.round(num * 1e9))
       st.pending.push({ memo, method, amount: String(units), sender: isUsdt ? sender.trim() : undefined, created: Date.now(), expires: Date.now() + cfg.ttlMin * 60_000, rate: lim.rate })
       saveStore(st)
+      payLog('created', { memo, method, amount: String(units), rate: lim.rate })
       setIntent({ memo, method, address: method === 'USDT_TRC20' ? cfg.trc20Address : cfg.tonAddress, amount: String(units), sender: sender.trim(), jettonMaster: method === 'USDT_TON' ? USDT_TON_MASTER : null }); setStatus('pending')
       return
     }
@@ -286,7 +370,7 @@ export function DepositModal({ onClose, onNotice }: { onClose: () => void; onNot
   const link = intent && intent.method !== 'USDT_TRC20'
     ? (intent.method === 'USDT_TON' ? `ton://transfer/${intent.address}?jetton=${intent.jettonMaster}&amount=${intent.amount}` : `ton://transfer/${intent.address}?amount=${intent.amount}&text=${intent.memo}`)
     : ''
-  const available = cfg ? (['TON', 'USDT_TON', 'USDT_TRC20'] as Method[]).filter(m => cfg.methods[m]) : []
+  const available = cfg ? ALL_METHODS.filter(m => cfg.methods[m]) : []
 
   return <div className="dep-back" onClick={onClose}>
     <div className="dep-card" onClick={e => e.stopPropagation()}>
@@ -298,25 +382,33 @@ export function DepositModal({ onClose, onNotice }: { onClose: () => void; onNot
         <div className="dep-methods" role="radiogroup" aria-label="Валюта">
           {available.map(m => (
             <button key={m} type="button" role="radio" aria-checked={method === m} className={`dep-method ${method === m ? 'on' : ''}`}
-              onClick={() => { setMethod(m); setAmount(m === 'TON' ? '1' : '10'); setErr('') }}>
-              {m === 'TON' ? <TonIcon size={26} /> : <UsdtIcon size={26} />}
-              <span><b>{m === 'TON' ? 'TON' : 'USDT'}</b><small>{m === 'TON' ? 'сеть TON' : m === 'USDT_TON' ? 'сеть TON' : 'сеть TRON · TRC20'}</small></span>
+              onClick={() => { setMethod(m); setAmount(m === 'TON' ? '1' : m === 'STARS' ? '100' : '10'); setErr('') }}>
+              {m === 'TON' ? <TonIcon size={26} /> : m === 'STARS' ? <Star size={26} fill="currentColor" /> : <UsdtIcon size={26} />}
+              <span><b>{m === 'TON' ? 'TON' : m === 'STARS' ? 'Telegram Stars' : 'USDT'}</b><small>{m === 'TON' ? 'сеть TON' : m === 'USDT_TON' ? 'сеть TON' : m === 'STARS' ? 'оплата внутри Telegram' : 'сеть TRON · TRC20'}</small></span>
               {method === m && <em>✓</em>}
             </button>))}
         </div>
         <label className="dep-lab">Сумма, {unit}</label>
         <input className="dep-input" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} />
-        <div className="dep-quick">{(isUsdt ? [5, 10, 50, 100] : [0.5, 1, 5, 10]).map(v => <button key={v} onClick={() => setAmount(String(v))}>{v}</button>)}</div>
+        <div className="dep-quick">{(isStars ? [50, 100, 500, 1000] : isUsdt ? [5, 10, 50, 100] : [0.5, 1, 5, 10]).map(v => <button key={v} onClick={() => setAmount(String(v))}>{v}</button>)}</div>
         {isUsdt && LOCAL && <>
           <label className="dep-lab">Адрес вашего кошелька, с которого платите ({method === 'USDT_TRC20' ? 'TRON' : 'TON'})</label>
           <input className="dep-input dep-mono" placeholder={method === 'USDT_TRC20' ? 'T…' : 'UQ… / EQ…'} value={sender} onChange={e => setSender(e.target.value)} />
           <p className="dep-hint">Платёж привязывается к вам по этому адресу и точной сумме. С чужого адреса он не засчитается.</p>
         </>}
+        {isStars && LOCAL && <p className="dep-hint">Тест для владельца: Stars не списываются, звёзды зачисляются сразу. Для реальной оплаты нужен сервер.</p>}
         <p className="dep-hint">≈ {money(num * lim!.rate)} ⭐ · 1 {unit} ≈ {lim!.rate} ⭐ (курс по рынку, обновляется) · от {lim!.min} до {lim!.max} {unit}</p>
-        <button className="primary-btn wide" onClick={create} disabled={!(num >= lim!.min && num <= lim!.max) || !available.length}>Продолжить</button>
+        <button className="primary-btn wide" onClick={create} disabled={!amountOk || !available.length}>Продолжить</button>
       </>}
       {cfg && intent && <>
-        {status === 'pending' && <>
+        {status === 'pending' && intent.method === 'STARS' && <>
+          <p className="dep-hint">{intent.invoice ? <>Счёт на <b>{intent.amount} Stars</b> создан. Оплатите его в Telegram, звёзды в игре появятся сразу после подтверждения. Счёт действует {cfg.ttlMin} мин.</> : <>Тестовая оплата <b>{intent.amount} Stars</b>.</>}</p>
+          {intent.invoice
+            ? <button className="primary-btn wide dep-open" onClick={() => openInvoice(intent.invoice!)}><Star size={16} fill="currentColor" /> Оплатить {intent.amount} Stars</button>
+            : <p className="dep-hint">Тестовый режим: деньги не списываются, звёзды зачисляются сейчас.</p>}
+          <p className="dep-hint">Ждём подтверждение, окно обновится само.</p>
+        </>}
+        {status === 'pending' && intent.method !== 'STARS' && <>
           {intent.method === 'TON' && <p className="dep-hint">Отправьте ровно {shown} TON на адрес ниже. <b>Комментарий обязателен</b>, без него платёж не зачтётся. Действует {cfg.ttlMin} мин.</p>}
           {intent.method === 'USDT_TON' && <p className="dep-hint">Отправьте <b>ровно {shown} USDT</b> (сеть TON) со своего кошелька <b>{intent.sender ? `${intent.sender.slice(0, 6)}…${intent.sender.slice(-4)}` : ''}</b>. Сумму не округляйте. Действует {cfg.ttlMin} мин.</p>}
           {intent.method === 'USDT_TRC20' && <p className="dep-hint">Отправьте <b>ровно {shown} USDT</b> только в сети <b>TRON (TRC20)</b> со своего кошелька <b>{intent.sender ? `${intent.sender.slice(0, 5)}…${intent.sender.slice(-4)}` : ''}</b>. Сумму не округляйте. Перевод в другой сети будет потерян. Действует {cfg.ttlMin} мин.</p>}
